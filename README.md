@@ -1,6 +1,7 @@
 # MorphingClockRemix
 Further modified by: Brian Leschke 2019
 - Currently a work in progress and updated code should be uploaded after the first week of September 2019.
+- It is known that there is a flickering issue. It may be resolved eventually.
 
 ## Additions
 - Fire/EMS Alert (on top bar)
