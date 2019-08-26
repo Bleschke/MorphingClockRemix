@@ -1,4 +1,12 @@
 # MorphingClockRemix
+Further modified by: Brian Leschke 2019
+- Currently a work in progress and updated code should be uploaded after the first week of September 2019.
+
+## Additions
+- Fire/EMS Alert (on top bar)
+- Weather Alert (on top bar)
+
+
 Remix from HarryFun's great Morphing Digital Clock idea https://www.instructables.com/id/Morphing-Digital-Clock/
 Follow the great tutorial there and eventually use this code as alternative.
 ![alt text](https://raw.githubusercontent.com/lmirel/MorphingClockRemix/master/MorphingClockRemix.jpg?raw=true)
@@ -21,6 +29,9 @@ Follow the great tutorial there and eventually use this code as alternative.
 - #define USE_ICONS
 - #define USE_FIREWORKS
 - #define USE_WEATHER_ANI
+- #define SHOW_FIREEMS_ALERT
+- #define SHOW_WX_ALERT
+
 You can re-enable it after configuration is done.
 <br>
 Alternatively, you can use the 'no-wm' branch for a static configuration approach.
