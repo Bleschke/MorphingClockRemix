@@ -6,6 +6,7 @@ Further modified by: Brian Leschke 2019
 ## Additions
 - Fire/EMS Alert (on top bar)
 - Weather Alert (on top bar)
+- WMATA Metro Arrival Times (separate page) https://developer.wmata.org
 
 
 Remix from HarryFun's great Morphing Digital Clock idea https://www.instructables.com/id/Morphing-Digital-Clock/
