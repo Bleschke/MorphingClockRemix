@@ -7,6 +7,7 @@ Further modified by: Brian Leschke 2019
 - Fire/EMS Alert (on top bar)
 - Weather Alert (on top bar)
 - WMATA Metro Arrival Times (separate page) https://developer.wmata.org
+- Network Device Status - UP/DN (separate page)
 
 
 Remix from HarryFun's great Morphing Digital Clock idea https://www.instructables.com/id/Morphing-Digital-Clock/
@@ -33,6 +34,8 @@ Follow the great tutorial there and eventually use this code as alternative.
 - #define USE_WEATHER_ANI
 - #define SHOW_FIREEMS_ALERT
 - #define SHOW_WX_ALERT
+- #define SHOW_WMATA
+- #define SHOW_NETWORK_STATUS
 
 You can re-enable it after configuration is done.
 <br>
