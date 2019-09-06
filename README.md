@@ -5,7 +5,7 @@ Further modified by: Brian Leschke 2019
 
 ## Additions
 - Fire/EMS Alert (on top bar)
-- Weather Alert (on top bar)
+- Weather Alert (on top bar) - currently not working
 - WMATA Metro Arrival Times (separate page) http://developer.wmata.com
 - Network Device Status - UP/DN (separate page)
 
