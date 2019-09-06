@@ -4,21 +4,51 @@ follow the great tutorial there and eventually use this code as alternative
 
 provided 'AS IS', use at your own risk
  * mirel.t.lazar@gmail.com
+
+Further Modified by:
+ * Brian Leschke
+ * 6 September 2019
+ * 
+ * 
+Additions:
+ - Weather Alerts (not currently working)
+ - Fire/EMS Alerts
+ - WMATA Metro Arrival Times
+ - Network Device Status (UP/DN)
+ - Additional date-based events
  */
+
+ 
 
 #include <TimeLib.h>
 #include <NtpClientLib.h>
 #include <ESP8266WiFi.h>
+#include <ESP8266Ping.h>
 
 #define double_buffer
 #include <PxMatrix.h>
 
-//#define USE_ICONS
-//#define USE_FIREWORKS
-//#define USE_WEATHER_ANI
+#define USE_ICONS
+#define USE_FIREWORKS
+#define USE_WEATHER_ANI
+#define SHOW_SOME_PRIDE
+#define SHOW_SOME_LOVE
+//#define SHOW_WX_ALERT
+#define SHOW_FIREEMS_ALERT
+#define SHOW_WMATA
+#define SHOW_NETWORK_STATUS
+
 
 //#include <Adafruit_GFX.h>    // Core graphics library
 //#include <Fonts/FreeMono9pt7b.h>
+
+//=== FIRE-EMS INFORMATION ===
+char SERVER_NAME[]    = "x.x.x.x"; // Address of the webserver without "http". Can also be an IP address.
+int SERVER_PORT       = PORT-NUM-HERE;       // webserver port
+
+char Str[11];
+int prevNum           = 0; //Number of previous emails before check
+int num               = 0; //Number of emails after check
 
 //=== WIFI MANAGER ===
 #include <DNSServer.h>
@@ -26,6 +56,73 @@ provided 'AS IS', use at your own risk
 #include <WiFiManager.h> //https://github.com/tzapu/WiFiManager
 char wifiManagerAPName[] = "MorphClk";
 char wifiManagerAPPassword[] = "MorphClk";
+
+//=== OPEN-WEATHER-MAP ===
+//open weather map api key https://openweathermap.org/
+String apiKey   = "KEY-HERE"; //e.g a hex string like "abcdef0123456789abcdef0123456789"
+//the city you want the weather for 
+String location = "LOCATION-HERE"; //e.g. "5391811" = San Diego, CA
+
+//=== NETWORK CHECK ===
+//change device names on line 1484
+const char* device1 = "www.google.com";   //IP address or web address without Http://
+const char* device2 = "x.x.x.x";
+const char* device3 = "x.x.x.x";
+const char* device4 = "x.x.x.x";
+const char* device5 = "x.x.x.x";
+const char* device6 = "x.x.x.x";
+const char* device7 = "x.x.x.x";
+
+int pingResult1;                      //Do not change.
+int pingResult2;                      //Do not change.
+int pingResult3;                      //Do not change.
+int pingResult4;                      //Do not change.
+int pingResult5;                      //Do not change.
+int pingResult6;                      //Do not change.
+int pingResult7;                      //Do not change.
+
+//=== WMATA INFORMATION ===
+#define      WMATAServer       "api.wmata.com"      // name address for WMATA (using DNS)
+const String myKey           = "KEY-HERE";           // See: https://developer.wmata.com/ (change here with your Primary/Secondary API KEY)
+const String stationCode     = "STATION-CODE-HERE";      // Metro station code . Ex Greenbelt = E10
+
+const int wmata_buffer_size = 300;                  // Do not change. Length of json buffer
+const int buffer=300;                               // Do not change.
+
+char* metroConds[]={                                // Do not change.
+   "\"Car\":",
+   "\"Destination\":",
+   "\"DestinationCode\":",
+   "\"DestinationName\":",
+   "\"Group\":",
+   "\"Line\":",
+   "\"LocationCode\":",
+   "\"LocationName\":",
+   "\"Min\":",
+};
+
+int num_elements        = 9;  // number of conditions you are retrieving, count of elements in conds
+unsigned long WMillis   = 0;  // temporary millis() register
+
+//=== NWS WEATHER.GOV API INFOMRATION===
+
+#define NWSServer            "api.weather.gov"  //name address for weather.gov (using dns)
+const String nwsKey        = "KEY-HERE";
+const String countyCode    = "COUNTY-CODE-HERE"; //Your county Code (ex. NCC055) https://alerts.weather.gov/
+
+const int nws_buffer_size = 300;                  // Do not change. Length of json buffer
+const int nws_Buffer=300;                         // Do not change.
+
+char* nwsConds[]={                                // Do not change.
+   "\"status\":",
+   "\"messageType\":",
+   "\"urgency\":",
+   "\"event\":",
+   "\"headline\":",
+};
+int num_wx_elements      = 5;  // number of conditions you are retrieving, count of elements in conds
+unsigned long WXMillis   = 0;  // temporary millis() register
+
 
 //== DOUBLE-RESET DETECTOR ==
 #include <DoubleResetDetector.h>
@@ -93,10 +190,10 @@ void configModeCallback (WiFiManager *myWiFiManager)
   drd.stop ();
 }
 
-char timezone[5] = "0";
+char timezone[5] = "-4";
 char military[3] = "Y";     // 24 hour mode? Y/N
-char u_metric[3] = "Y";     // use metric for units? Y/N
-char date_fmt[7] = "D.M.Y"; // date format: D.M.Y or M.D.Y or M.D or D.M or D/M/Y.. looking for trouble
+char u_metric[3] = "N";     // use metric for units? Y/N
+char date_fmt[7] = "M.D.Y"; // date format: D.M.Y or M.D.Y or M.D or D.M or D/M/Y.. looking for trouble
 bool loadConfig () 
 {
   File configFile = SPIFFS.open ("/config.json", "r");
@@ -211,6 +308,7 @@ void wifi_setup ()
   if (drd.detectDoubleReset ()) 
   {
     Serial.println ("Double Reset Detected");
+    TFDrawText (&display, String("     ONLINE     "), 0, 13, display.color565(0, 0, 255));
 
     display.setCursor (0, row0);
     display.print ("AP:");
@@ -261,7 +359,17 @@ void wifi_setup ()
   //display.setCursor (2, row1);
   TFDrawText (&display, String("     ONLINE     "), 0, 13, display.color565(0, 0, 255));
   Serial.print ("WiFi connected, IP address: ");
-  Serial.println (WiFi.localIP ());
+  Serial.println (WiFi.localIP ());\
+  display.setCursor (0, row2);
+  display.print ((WiFi.localIP ()));
+  /*delay(5);
+  display.fillScreen (0);
+  TFDrawText (&display, String("     Welcome      "), 0, 0, display.color565(0, 150, 255));
+  TFDrawText (&display, String("        to        "), 0, 8, display.color565(0, 130, 255));
+  TFDrawText (&display, String("    MorphClock    "), 0, 16, display.color565(0, 110, 255));
+  delay(5);
+  display.fillScreen (0);
+  */
   //
   //start NTP
   NTP.begin ("pool.ntp.org", String(timezone).toInt(), false);
@@ -331,10 +439,6 @@ void setup()
   //
 }
 
-//open weather map api key 
-String apiKey   = ""; //e.g a hex string like "abcdef0123456789abcdef0123456789"
-//the city you want the weather for 
-String location = "Muenchen,DE"; //e.g. "Paris,FR"
 char server[]   = "api.openweathermap.org";
 WiFiClient client;
 int tempMin = -10000;
@@ -358,7 +462,7 @@ void getWeather ()
     Serial.println ("connected."); 
     // Make a HTTP request: 
     client.print ("GET /data/2.5/weather?"); 
-    client.print ("q="+location); 
+    client.print ("id="+location); 
     client.print ("&appid="+apiKey); 
     client.print ("&cnt=1"); 
     (*u_metric=='Y')?client.println ("&units=metric"):client.println ("&units=imperial");
@@ -903,11 +1007,12 @@ void draw_weather ()
 
 void draw_love ()
 {
-  Serial.println ("showing some love");
+  Serial.println ("Showing some love");
   use_ani = 0;
-  //love*you,boo
-  yo = 1;
+  //love*you,boo. live laugh love
   int cc = random (255, 65535);
+
+  yo = 1;
   xo  = 0; TFDrawChar (&display, 'L', xo, yo, cc); cc = random (255, 65535);
   xo += 4; TFDrawChar (&display, 'O', xo, yo, cc); cc = random (255, 65535);
   xo += 4; TFDrawChar (&display, 'V', xo, yo, cc); cc = random (255, 65535);
@@ -924,7 +1029,1076 @@ void draw_love ()
   xo += 4; TFDrawChar (&display, 'B', xo, yo, cc); cc = random (255, 65535);
   xo += 4; TFDrawChar (&display, 'O', xo, yo, cc); cc = random (255, 65535);
   xo += 4; TFDrawChar (&display, 'O', xo, yo, cc); cc = random (255, 65535);
+
+  yo=26;
+  xo  = 0; TFDrawChar (&display, 'L', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'I', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'V', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'E', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'L', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'A', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'U', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'G', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'H', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'L', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'O', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'V', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'E', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, cc); cc = random (255, 65535);
 }
+//
+
+void draw_pride ()
+{
+  Serial.println ("Showing some pride month pride!");
+  use_ani = 0;
+  //happy pride! love * wins
+  int cc = random (255, 65535);
+
+  yo = 1;
+  xo  = 0; TFDrawChar (&display, ' ', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'H', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'A', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'P', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'P', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'Y', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'P', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'R', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'I', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'D', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'E', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, '!', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, cc); cc = random (255, 65535);
+
+  yo=26;
+  xo  = 0; TFDrawChar (&display, ' ', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'L', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'O', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'V', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'E', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'h', xo, yo, display.color565 (255, 0, 0));
+  xo += 4; TFDrawChar (&display, 'i', xo, yo, display.color565 (255, 0, 0));
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'W', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'I', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'N', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'S', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, cc); cc = random (255, 65535);
+}
+//  
+
+void draw_OutDay ()
+{
+  Serial.println ("Showing some pride for National Coming Out Day!");
+  use_ani = 0;
+  //natl coming out day, love * you!
+  int cc = random (255, 65535);
+
+  yo = 1;
+  xo  = 0; TFDrawChar (&display, 'N', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'A', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'T', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'L', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'C', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'O', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'M', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'I', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'N', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'G', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'O', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'U', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'T', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, cc); cc = random (255, 65535);
+
+  yo=26;
+  xo  = 0; TFDrawChar (&display, 'D', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'A', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'Y', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, ',', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'L', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'O', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'V', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'E', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'h', xo, yo, display.color565 (255, 0, 0));
+  xo += 4; TFDrawChar (&display, 'i', xo, yo, display.color565 (255, 0, 0));
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'Y', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'O', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, 'U', xo, yo, cc); cc = random (255, 65535);
+  xo += 4; TFDrawChar (&display, '!', xo, yo, cc); cc = random (255, 65535);
+}
+//  
+
+void check_NWS ()
+{
+  Serial.print("NWS: Connecting to ");
+  Serial.println(NWSServer);
+
+  
+  // Use WiFiClient class to create TCP connections
+  WiFiClient client;
+  
+  const int nws_httpPort = 443;
+  
+  if (!client.connect(NWSServer, nws_httpPort)) {
+    Serial.println("NWS: connection failed");
+    return;
+  }
+  
+  String cmd = "GET /alerts/active/zone/";  cmd += countyCode;      // build request_string cmd
+  //cmd += "?api_key=";  cmd += nwsKey;  //
+  //cmd += " HTTP/1.1\r\nHost: api.weather.gov\r\n\r\n";            
+  delay(500);
+  client.print(cmd);                                            
+  delay(500);
+  unsigned int i = 0;                                           // timeout counter
+  char json[nws_buffer_size]="{";                                   // first character for json-string is begin-bracket 
+  int n = 1;                                                    // character counter for json
+  
+  
+  for (int j=0;j<num_wx_elements;j++){                             // do the loop for every element/condition
+    boolean quote = false; int nn = false;                      // if quote=fals means no quotes so comma means break
+    while (!client.find(nwsConds[j]))                         // If nws condition data is not available, try again.
+    {
+      Serial.println("No weather alert data available");
+      use_ani = 0;
+      yo = 1;
+      xo = 0;  TFDrawChar (&display, 'N', xo, yo, display.color565(cin, cin, 0)); 
+      xo += 4; TFDrawChar (&display, 'O', xo, yo, display.color565(cin, cin, 0)); 
+      xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, cin, 0)); 
+      xo += 4; TFDrawChar (&display, 'W', xo, yo, display.color565(cin, cin, 0)); 
+      xo += 4; TFDrawChar (&display, 'X', xo, yo, display.color565(cin, cin, 0)); 
+      xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, cin, 0)); 
+      xo += 4; TFDrawChar (&display, 'A', xo, yo, display.color565(cin, cin, 0)); 
+      xo += 4; TFDrawChar (&display, 'L', xo, yo, display.color565(cin, cin, 0)); 
+      xo += 4; TFDrawChar (&display, 'E', xo, yo, display.color565(cin, cin, 0)); 
+      xo += 4; TFDrawChar (&display, 'R', xo, yo, display.color565(cin, cin, 0)); 
+      xo += 4; TFDrawChar (&display, 'T', xo, yo, display.color565(cin, cin, 0)); 
+      xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, cin, 0)); 
+      xo += 4; TFDrawChar (&display, 'D', xo, yo, display.color565(cin, cin, 0)); 
+      xo += 4; TFDrawChar (&display, 'A', xo, yo, display.color565(cin, cin, 0)); 
+      xo += 4; TFDrawChar (&display, 'T', xo, yo, display.color565(cin, cin, 0)); 
+      xo += 4; TFDrawChar (&display, 'A', xo, yo, display.color565(cin, cin, 0)); 
+      return;
+    }                            
+  
+    String Str1= nwsConds[j];                                     // Str1 gets the name of element/condition
+  
+    for (int l=0; l<(Str1.length());l++)                        // for as many character one by one
+        {json[n] = Str1[l];                                     // fill the json string with the name
+         n++;}                                                  // character count +1
+    while (i<5000) {                                            // timer/counter
+      if(client.available()) {                                  // if character found in receive-buffer
+        char c = client.read();                                 // read that character
+           Serial.print(c);                                     // 
+           
+// ************************ construction of json string converting comma's inside quotes to dots ******************** 
+               if ((c=='"') && (quote==false))                  // there is a " and quote=false, so start of new element
+                  {quote = true;nn=n;}                          // make quote=true and notice place in string
+               if ((c==',')&&(quote==true)) {c='.';}            // if there is a comma inside quotes, comma becomes a dot.
+               if ((c=='"') && (quote=true)&&(nn!=n))           // if there is a " and quote=true and on different position
+                  {quote = false;}                              // quote=false meaning end of element between ""
+               if((c==',')&&(quote==false)) break;              // if comma delimiter outside "" then end of this element
+ // ****************************** end of construction ******************************************************
+          json[n]=c;                                            // fill json string with this character
+          n++;                                                  // character count + 1
+          i=0;                                                  // timer/counter + 1
+        }
+        i++;                                                    // add 1 to timer/counter
+      }                    // end while i<5000
+     if (j==num_elements-1)                                     // if last element
+        {json[n]='}';}                                          // add end bracket of json string
+     else                                                       // else
+        {json[n]=',';}                                          // add comma as element delimiter
+     n++;                                                       // next place in json string
+  }
+  Serial.println(json);                                         // debugging json string 
+  parseJSON_nws(json);                                              // extract the conditions
+  WXMillis=millis();
+}
+
+void parseJSON_nws(char json[300])
+{
+  display.fillScreen (0);
+  StaticJsonBuffer<buffer> jsonBuffer;
+  JsonObject& root = jsonBuffer.parseObject(json);
+ 
+ if (!root.success())
+{
+  Serial.println("?fparseObject() failed");
+  //return;
+}
+
+ 
+ String wxstatus              = root["status"];
+ String MessageType           = root["messageType"];
+ String Urgency               = root["urgency"];
+ String Event                 = root["event"];
+ String Headline              = root["headline"];
+ 
+ wxstatus.toUpperCase();
+ MessageType.toUpperCase();
+ Urgency.toUpperCase();
+ Event.toUpperCase();
+ Headline.toUpperCase();
+ 
+ Serial.println(wxstatus);
+ Serial.println(MessageType);
+  Serial.println("..");
+ Serial.println(Urgency);
+ Serial.println(Event);
+ Serial.println(Headline);
+ 
+ if (wxstatus == "ACTUAL")
+ {
+  if (Event == "TORNADO WARNING")
+  {
+    Serial.println ("Tornado Warning");
+    use_ani = 0;
+    yo = 1;
+    xo  = 0; TFDrawText (&display, String("TORNADO  WARNING"), xo, yo, display.color565(255, 0, 0));
+    yo=26;
+    xo  = 0; TFDrawText (&display, String("SEEK SHELTER NOW"), xo, yo, display.color565(255, 0, 0)); 
+  }
+  else if (Event == "TORNADO WATCH")
+  {
+    Serial.println ("Tornado Watch");
+    use_ani = 0;
+    yo = 1;
+    xo  = 0; TFDrawText (&display, String(" TORNADO  WATCH "), xo, yo, display.color565(255, 165, 0));    
+  }
+  else if (Event == "HURRICANE WARNING")
+  {
+    Serial.println ("Hurricane Warning");
+    use_ani = 0;
+    yo = 1;
+    xo  = 0; TFDrawText (&display, String(" HURRICANE  WRN "), xo, yo, display.color565(255, 165, 0));  
+  }
+  else if (Event == "HURRICANE WATCH")
+  {
+    Serial.println ("Hurricane Watch");
+    use_ani = 0;
+    yo = 1;
+    xo  = 0; TFDrawText (&display, String(" HURRICANE  WAT "), xo, yo, display.color565(255, 165, 0)); 
+  }
+  else if (Event == "SEVERE THUNDERSTORM WARNING")
+  {
+    Serial.println ("Severe Thunderstorm Warning");
+    use_ani = 0;
+    yo = 1;
+    xo  = 0; TFDrawText (&display, String("SEV THUNDER WRN "), xo, yo, display.color565(255, 165, 0));
+  }
+  else if (Event == "SEVERE THUNDERSTORM WATCH")
+  {
+    Serial.println ("Severe Thunderstorm Watch");
+    use_ani = 0;
+    yo = 1;
+    xo  = 0; TFDrawText (&display, String("SEV THUNDER WAT "), xo, yo, display.color565(255, 165, 0));
+  }
+  else if (Event == "BLIZZARD WARNING")
+  {
+    Serial.println ("Blizzard Warning");
+    use_ani = 0;
+    yo = 1;
+    xo  = 0; TFDrawText (&display, String("BLIZZARD WARNING"), xo, yo, display.color565(255, 165, 0)); 
+  }
+  else if (Event == "WINTER STORM WARNING")
+  {
+    Serial.println ("Winter Storm Warning");
+    use_ani = 0;
+    yo = 1;
+    xo  = 0; TFDrawText (&display, String("WINTER STORM WRN"), xo, yo, display.color565(255, 165, 0)); 
+  }
+  else if (Event == "WINTER STORM WATCH")
+  {
+    Serial.println ("Winter Storm Watch");
+    use_ani = 0;
+    yo = 1;
+    xo  = 0; TFDrawText (&display, String("WINTER STORM WAT"), xo, yo, display.color565(255, 165, 0)); 
+  }
+  else if (Event == "FLOOD WARNING")
+  {
+    Serial.println ("Flood Warning");
+    use_ani = 0;
+    yo = 1;
+    xo  = 0; TFDrawText (&display, String(" FLOOD  WARNING "), xo, yo, display.color565(255, 165, 0)); 
+  }
+  else if (Event == "FLASH FLOOD WARNING")
+  {
+    Serial.println ("Flash Flood Warning");
+    use_ani = 0;
+    yo = 1;
+    xo  = 0; TFDrawText (&display, String("FLASH FLOOD WRN "), xo, yo, display.color565(255, 165, 0)); 
+  }
+  else
+  {
+    Serial.println (" No Notable Severe Weather Alerts");
+  }
+ }
+ delay (8000);
+ draw_weather ();
+ draw_date ();
+}
+//
+
+void draw_FireEMSAlert ()
+{
+  Serial.println ("Fire EMS Alert check");
+  WiFiClient client;
+  if (client.connect(SERVER_NAME, SERVER_PORT)) {
+    Serial.println("Fire/EMS email check: connected");
+    // Make a HTTP request:
+    client.println("GET /GetGmail.php");  // Apache server pathway.
+    client.println();
+    delay(2000);
+  } 
+  else {
+    // if you didn't get a connection to the server:
+    Serial.println("Fire/EMS email check: connection failed");  //cannot connect to server
+  }
+
+  // if there's data ready to be read:
+  if (client.available()) {  
+    int i = 0;   
+    //put the data in the array:
+    do {
+      Str[i] = client.read();
+      i++;
+      delay(1);
+    } while (client.available());
+     
+    // Pop on the null terminator:
+    Str[i] = '\0';
+    //convert server's repsonse to a int so we can evaluate it
+    num = atoi(Str); 
+     
+    Serial.print("Server's response: ");
+    Serial.println(num);
+    Serial.print("Previous response: ");
+    Serial.println(prevNum);
+    if (prevNum < 0)
+    { //the first time around, set the previous count to the current count
+      prevNum = num; 
+      Serial.println("First email count stored.");
+    }
+    if (prevNum > num)
+    { // handle if count goes down for some reason
+      prevNum = num; 
+    }
+  }
+  else
+    {
+    Serial.println("No response from server."); //cannot connect to server.
+    }
+    Serial.println("Disconnecting."); //disconnecting from server to reconnect
+    client.stop();
+    
+    // ---------------- FIRE\EMS: ALERT FOR FIRE\EMS CALL ----------------   
+    
+    if(num > prevNum) {
+    Serial.println("FIRE/EMS ALERT!");  //alert for new email
+    prevNum = num;  //number of old emails =  number of new emails
+    
+    use_ani = 0;
+    yo = 1;
+    //xo  = 0; TFDrawText (&display, String("FIRE/EMS ALERT  "), xo, yo, display.color565(255, 255, 0));
+    xo  = 0; TFDrawChar (&display, ' ', xo, yo, display.color565(255, 255, 0));
+    xo += 4; TFDrawChar (&display, 'F', xo, yo, display.color565(255, 255, 0));
+    xo += 4; TFDrawChar (&display, 'I', xo, yo, display.color565(255, 255, 0));
+    xo += 4; TFDrawChar (&display, 'R', xo, yo, display.color565(255, 255, 0));
+    xo += 4; TFDrawChar (&display, 'E', xo, yo, display.color565(255, 255, 0));
+    xo += 4; TFDrawChar (&display, '/', xo, yo, display.color565(255, 255, 0));
+    xo += 4; TFDrawChar (&display, 'E', xo, yo, display.color565(255, 255, 0));
+    xo += 4; TFDrawChar (&display, 'M', xo, yo, display.color565(255, 255, 0));
+    xo += 4; TFDrawChar (&display, 'S', xo, yo, display.color565(255, 255, 0));
+    xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(255, 255, 0));
+    xo += 4; TFDrawChar (&display, 'A', xo, yo, display.color565(255, 255, 0));
+    xo += 4; TFDrawChar (&display, 'L', xo, yo, display.color565(255, 255, 0));
+    xo += 4; TFDrawChar (&display, 'E', xo, yo, display.color565(255, 255, 0));
+    xo += 4; TFDrawChar (&display, 'R', xo, yo, display.color565(255, 255, 0));
+    xo += 4; TFDrawChar (&display, 'T', xo, yo, display.color565(255, 255, 0));
+    xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(255, 255, 0));
+    }
+    else  //if email value is lower/equal to previous, no alert.
+    {
+    Serial.println("No New Alert Emails");
+    }
+}
+
+//
+void check_Network ()
+{
+  Serial.println("");
+  Serial.println("Pinging ");
+  Serial.print(device1);
+  pingResult1 = Ping.ping(device1, 1);
+  
+  Serial.println("");
+  Serial.println("Pinging ");
+  Serial.print(device2);
+  pingResult2 = Ping.ping(device2, 1);
+  
+  Serial.println("");
+  Serial.println("Pinging ");
+  Serial.print(device3);
+  pingResult3 = Ping.ping(device3, 1);
+  
+  Serial.println("");
+  Serial.println("Pinging ");
+  Serial.print(device4);
+  pingResult4 = Ping.ping(device4, 1);
+  
+  Serial.println("");
+  Serial.println("Pinging ");
+  Serial.print(device5);
+  pingResult5 = Ping.ping(device5, 1);
+
+  Serial.println("");
+  Serial.println("Pinging ");
+  Serial.print(device6);
+  pingResult6 = Ping.ping(device6, 1);
+
+  Serial.println("");
+  Serial.println("Pinging ");
+  Serial.print(device7);
+  pingResult6 = Ping.ping(device7, 1);
+
+
+  display.fillScreen (0);
+  
+  if (pingResult1 >= 0) {
+    Serial.print("1. ONLINE");
+    use_ani = 0;
+    yo = 1;
+    xo = 0; TFDrawChar  (&display, 'I', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, 'N', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, 'E', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, 'T', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+    xo += 4; TFDrawChar (&display, 'U', xo, yo, display.color565(0, cin, 0)); 
+    xo += 4; TFDrawChar (&display, 'P', xo, yo, display.color565(0, cin, 0)); 
+  } else {
+    Serial.print("1. OFFLINE");
+    use_ani = 0;
+    yo = 1;
+    xo = 0; TFDrawChar  (&display, 'I', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, 'N', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, 'E', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, 'T', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+    xo += 4; TFDrawChar (&display, 'D', xo, yo, display.color565(cin, 0, 0)); 
+    xo += 4; TFDrawChar (&display, 'N', xo, yo, display.color565(cin, 0, 0)); 
+  }
+
+  if (pingResult2 >= 0) {
+    Serial.print("2. ONLINE");
+    yo = 7;
+    xo = 0; TFDrawChar  (&display, 'F', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, 'R', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, 'W', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, 'L', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+    xo += 4; TFDrawChar (&display, 'U', xo, yo, display.color565(0, cin, 0)); 
+    xo += 4; TFDrawChar (&display, 'P', xo, yo, display.color565(0, cin, 0)); 
+  } else {
+    Serial.print("2. OFFLINE");
+    use_ani = 0;
+    yo = 7;
+    xo = 0; TFDrawChar  (&display, 'F', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, 'R', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, 'W', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, 'L', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+    xo += 4; TFDrawChar (&display, 'D', xo, yo, display.color565(cin, 0, 0)); 
+    xo += 4; TFDrawChar (&display, 'N', xo, yo, display.color565(cin, 0, 0)); 
+  }
+  
+  if (pingResult3 >= 0) {
+    Serial.print("3. ONLINE");
+    yo = 13;
+    xo = 0; TFDrawChar  (&display, '.', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, 'D', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, 'N', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, 'S', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+    xo += 4; TFDrawChar (&display, 'U', xo, yo, display.color565(0, cin, 0)); 
+    xo += 4; TFDrawChar (&display, 'P', xo, yo, display.color565(0, cin, 0)); 
+  } else {
+    Serial.print("3. OFFLINE");
+    yo = 13;
+    xo = 0; TFDrawChar  (&display, '.', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, 'D', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, 'N', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, 'S', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+    xo += 4; TFDrawChar (&display, 'D', xo, yo, display.color565(cin, 0, 0)); 
+    xo += 4; TFDrawChar (&display, 'N', xo, yo, display.color565(cin, 0, 0)); 
+  }
+
+  if (pingResult4 >= 0) {
+    Serial.print("4. ONLINE");
+    yo = 19;
+    xo = 0; TFDrawChar  (&display, 'W', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, 'B', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, 'S', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, 'V', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+    xo += 4; TFDrawChar (&display, 'U', xo, yo, display.color565(0, cin, 0)); 
+    xo += 4; TFDrawChar (&display, 'P', xo, yo, display.color565(0, cin, 0)); 
+  } else {
+    Serial.print("4. OFFLINE");
+    yo = 19;
+    xo = 0; TFDrawChar  (&display, 'W', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, 'B', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, 'S', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, 'V', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+    xo += 4; TFDrawChar (&display, 'D', xo, yo, display.color565(cin, 0, 0)); 
+    xo += 4; TFDrawChar (&display, 'N', xo, yo, display.color565(cin, 0, 0)); 
+  }
+
+  if (pingResult5 >= 0) {
+    Serial.print("5. ONLINE");
+    yo = 25;
+    xo = 0; TFDrawChar  (&display, 'W', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, 'X', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, 'A', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, 'L', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+    xo += 4; TFDrawChar (&display, 'U', xo, yo, display.color565(0, cin, 0)); 
+    xo += 4; TFDrawChar (&display, 'P', xo, yo, display.color565(0, cin, 0)); 
+  } else {
+    Serial.print("5. OFFLINE");
+    yo = 25;
+    xo = 0; TFDrawChar  (&display, 'W', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, 'X', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, 'A', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, 'L', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+    xo += 4; TFDrawChar (&display, 'D', xo, yo, display.color565(cin, 0, 0)); 
+    xo += 4; TFDrawChar (&display, 'N', xo, yo, display.color565(cin, 0, 0)); 
+  }
+
+  if (pingResult6 >= 0) {
+    Serial.print("6. ONLINE");
+    yo = 1;
+    xo = 32; TFDrawChar  (&display, 'A', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, 'L', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, 'R', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, 'M', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+    xo += 4; TFDrawChar (&display, 'U', xo, yo, display.color565(0, cin, 0)); 
+    xo += 4; TFDrawChar (&display, 'P', xo, yo, display.color565(0, cin, 0)); 
+  } else {
+    Serial.print("6. OFFLINE");
+    yo = 1;
+    xo = 32; TFDrawChar  (&display, 'A', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, 'L', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, 'R', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, 'M', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+    xo += 4; TFDrawChar (&display, 'D', xo, yo, display.color565(cin, 0, 0)); 
+    xo += 4; TFDrawChar (&display, 'N', xo, yo, display.color565(cin, 0, 0)); 
+  }
+
+  if (pingResult7 >= 0) {
+    Serial.print("7. ONLINE");
+    yo = 7;
+    xo = 32; TFDrawChar  (&display, 'P', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, 'A', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, 'G', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, 'E', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+    xo += 4; TFDrawChar (&display, 'U', xo, yo, display.color565(0, cin, 0)); 
+    xo += 4; TFDrawChar (&display, 'P', xo, yo, display.color565(0, cin, 0)); 
+  } else {
+    Serial.print("7. OFFLINE");
+    yo = 7;
+    xo = 32; TFDrawChar  (&display, 'P', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, 'A', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, 'G', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, 'E', xo, yo, display.color565(cin, cin, cin)); 
+    xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+    xo += 4; TFDrawChar (&display, 'D', xo, yo, display.color565(cin, 0, 0)); 
+    xo += 4; TFDrawChar (&display, 'N', xo, yo, display.color565(cin, 0, 0)); 
+  }
+  delay (6000);
+  display.fillScreen (0);
+  ntpsync = 1;
+  draw_weather ();
+  draw_date ();
+}
+
+//
+void check_WMATA ()
+{ 
+  Serial.print("Metro: Connecting to ");
+  Serial.println(WMATAServer);
+
+  
+  // Use WiFiClient class to create TCP connections
+  WiFiClient client;
+  
+  const int httpPort = 80;
+  
+  if (!client.connect(WMATAServer, httpPort)) {
+    Serial.println("connection failed");
+    return;
+  }
+  
+  String cmd = "GET /StationPrediction.svc/json/GetPrediction/";  cmd += stationCode;      // build request_string cmd
+  cmd += "?api_key=";  cmd += myKey;  //
+  cmd += " HTTP/1.1\r\nHost: api.wmata.com\r\n\r\n";            
+  delay(500);
+  client.print(cmd);                                            
+  delay(500);
+  unsigned int i = 0;                                           // timeout counter
+  char json[wmata_buffer_size]="{";                                   // first character for json-string is begin-bracket 
+  int n = 1;                                                    // character counter for json
+  
+  
+  for (int j=0;j<num_elements;j++){                             // do the loop for every element/condition
+    boolean quote = false; int nn = false;                      // if quote=fals means no quotes so comma means break
+    while (!client.find(metroConds[j]))                         // If metro condition data is not available, try again.
+    {
+      Serial.println("No data available");
+      use_ani = 0;
+      yo = 1;
+      xo = 0;  TFDrawChar (&display, ' ', xo, yo, display.color565(cin, cin, 0)); 
+      xo += 4; TFDrawChar (&display, 'W', xo, yo, display.color565(cin, cin, 0)); 
+      xo += 4; TFDrawChar (&display, 'M', xo, yo, display.color565(cin, cin, 0)); 
+      xo += 4; TFDrawChar (&display, 'A', xo, yo, display.color565(cin, cin, 0)); 
+      xo += 4; TFDrawChar (&display, 'T', xo, yo, display.color565(cin, cin, 0)); 
+      xo += 4; TFDrawChar (&display, 'A', xo, yo, display.color565(cin, cin, 0)); 
+      xo += 4; TFDrawChar (&display, '-', xo, yo, display.color565(cin, cin, 0)); 
+      xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, cin, 0)); 
+      xo += 4; TFDrawChar (&display, 'N', xo, yo, display.color565(cin, cin, 0)); 
+      xo += 4; TFDrawChar (&display, 'O', xo, yo, display.color565(cin, cin, 0)); 
+      xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, cin, 0)); 
+      xo += 4; TFDrawChar (&display, 'D', xo, yo, display.color565(cin, cin, 0)); 
+      xo += 4; TFDrawChar (&display, 'A', xo, yo, display.color565(cin, cin, 0)); 
+      xo += 4; TFDrawChar (&display, 'T', xo, yo, display.color565(cin, cin, 0)); 
+      xo += 4; TFDrawChar (&display, 'A', xo, yo, display.color565(cin, cin, 0)); 
+      xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, cin, 0)); 
+      return;
+    }                            
+  
+    String Str1= metroConds[j];                                     // Str1 gets the name of element/condition
+  
+    for (int l=0; l<(Str1.length());l++)                        // for as many character one by one
+        {json[n] = Str1[l];                                     // fill the json string with the name
+         n++;}                                                  // character count +1
+    while (i<5000) {                                            // timer/counter
+      if(client.available()) {                                  // if character found in receive-buffer
+        char c = client.read();                                 // read that character
+           Serial.print(c);                                     // 
+           
+// ************************ construction of json string converting comma's inside quotes to dots ******************** 
+               if ((c=='"') && (quote==false))                  // there is a " and quote=false, so start of new element
+                  {quote = true;nn=n;}                          // make quote=true and notice place in string
+               if ((c==',')&&(quote==true)) {c='.';}            // if there is a comma inside quotes, comma becomes a dot.
+               if ((c=='"') && (quote=true)&&(nn!=n))           // if there is a " and quote=true and on different position
+                  {quote = false;}                              // quote=false meaning end of element between ""
+               if((c==',')&&(quote==false)) break;              // if comma delimiter outside "" then end of this element
+ // ****************************** end of construction ******************************************************
+          json[n]=c;                                            // fill json string with this character
+          n++;                                                  // character count + 1
+          i=0;                                                  // timer/counter + 1
+        }
+        i++;                                                    // add 1 to timer/counter
+      }                    // end while i<5000
+     if (j==num_elements-1)                                     // if last element
+        {json[n]='}';}                                          // add end bracket of json string
+     else                                                       // else
+        {json[n]=',';}                                          // add comma as element delimiter
+     n++;                                                       // next place in json string
+  }
+  Serial.println(json);                                         // debugging json string 
+  parseJSON_metro(json);                                              // extract the conditions
+  WMillis=millis();
+}
+
+void parseJSON_metro(char json[300])
+{
+  display.fillScreen (0);
+  StaticJsonBuffer<buffer> jsonBuffer;
+  JsonObject& root = jsonBuffer.parseObject(json);
+ 
+ if (!root.success())
+{
+  Serial.println("?fparseObject() failed");
+  //return;
+}
+
+ 
+ //int Car                    = root["Car"];
+ String Car                   = root["Car"];
+ String Destination           = root["Destination"];
+//const char* Destination     = root["Destination"];
+ const char* DestinationCode  = root["DestinationCode"];
+//const char* DestinationName = root["DestinationName"];
+ String DestinationName       = root["DestinationName"];
+ int Group                    = root["Group"];
+ String Line                  = root["Line"];
+ const char* LocationCode     = root["LocationCode"];
+ //const char* LocationName   = root["LocationName"];
+ String LocationName          = root["LocationName"];
+ //const char* CMin           = root["Min"];
+ String CMin                  = root["Min"];
+ float Min                    = root["Min"];
+
+ Car.toUpperCase();
+ LocationName.toUpperCase();
+ Destination.toUpperCase();
+ Line.toUpperCase();
+ 
+ Serial.println(Car);
+ Serial.println(Destination);
+  Serial.println("..");
+ Serial.println(DestinationCode);
+ Serial.println(DestinationName);
+ Serial.println(Group);
+ Serial.println(Line);
+ Serial.println(LocationCode);
+ Serial.println(CMin);
+ Serial.println(Min);
+ 
+ if (Line == "RD")
+ {
+  Serial.println("RED LINE");
+  use_ani = 0;
+  yo = 1;
+  xo = 0; TFDrawText (&display, String(LocationName), xo, yo, display.color565(cin, cin, 0));
+  yo = 7;
+  xo = 0; TFDrawText (&display, "LN   CAR   MIN", xo, yo, display.color565(cin, 0, 0));
+  yo = 13;
+  xo =  0; TFDrawChar (&display, 'R', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, 'D', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  if (Car == "8")
+  {
+    xo += 4; TFDrawText (&display, String(Car), xo, yo, display.color565(0, cin, 0)); 
+  }
+  else
+  {
+    xo += 4; TFDrawText (&display, String(Car), xo, yo, display.color565(cin, cin, 0));
+  }
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawText (&display, String(CMin), xo, yo, display.color565(cin, cin, 0));
+  
+  yo = 19;
+  xo = 0; TFDrawText (&display, "DEST", xo, yo, display.color565(cin, 0, 0));
+  yo = 25;
+  xo = 0; TFDrawText (&display, String(Destination), xo, yo, display.color565(cin, cin, 0));
+    
+ }
+ else if (Line == "OR")
+ {
+  Serial.println("ORANGE LINE");
+  use_ani = 0;
+  yo = 1;
+  xo = 0; TFDrawText (&display, String(LocationName), xo, yo, display.color565(cin, cin, 0));
+  yo = 7;
+  xo = 0; TFDrawText (&display, "LN   CAR   MIN", xo, yo, display.color565(cin, 0, 0));
+  yo = 13;
+  xo = 0; TFDrawChar (&display,  'O', xo, yo, display.color565(255, 165, 0));
+  xo += 4; TFDrawChar (&display, 'R', xo, yo, display.color565(255, 165, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(255, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(255, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(255, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(255, 0, 0)); 
+  if (Car == "8")
+  {
+    xo += 4; TFDrawText (&display, String(Car), xo, yo, display.color565(0, cin, 0)); 
+  }
+  else
+  {
+    xo += 4; TFDrawText (&display, String(Car), xo, yo, display.color565(cin, cin, 0));
+  }
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawText (&display, String(CMin), xo, yo, display.color565(cin, cin, 0));
+  
+  yo = 19;
+  xo = 0; TFDrawText (&display, "DEST", xo, yo, display.color565(cin, 0, 0));
+  yo = 25;
+  xo = 0; TFDrawText (&display, String(Destination), xo, yo, display.color565(cin, cin, 0));
+    
+  
+ }
+ else if (Line == "YL")
+ {
+  Serial.println("YELLOW LINE");
+  use_ani = 0;
+  yo = 1;
+  xo = 0; TFDrawText (&display, String(LocationName), xo, yo, display.color565(cin, cin, 0));
+  yo = 7;
+  xo = 0; TFDrawText (&display, "LN   CAR   MIN", xo, yo, display.color565(cin, 0, 0));
+  yo = 13;
+  xo = 0; TFDrawChar (&display,  'Y', xo, yo, display.color565(cin, cin, 0));
+  xo += 4; TFDrawChar (&display, 'L', xo, yo, display.color565(cin, cin, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  if (Car == "8")
+  {
+    xo += 4; TFDrawText (&display, String(Car), xo, yo, display.color565(0, cin, 0)); 
+  }
+  else
+  {
+    xo += 4; TFDrawText (&display, String(Car), xo, yo, display.color565(cin, cin, 0));
+  }
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawText (&display, String(CMin), xo, yo, display.color565(cin, cin, 0));
+  
+  yo = 19;
+  xo = 0; TFDrawText (&display, "DEST", xo, yo, display.color565(cin, 0, 0));
+  yo = 25;
+  xo = 0; TFDrawText (&display, String(Destination), xo, yo, display.color565(cin, cin, 0));
+    
+ }
+ else if (Line == "GR")
+ {
+  Serial.println("GREEN LINE");
+  use_ani = 0;
+  yo = 1;
+  xo = 0; TFDrawText (&display, String(LocationName), xo, yo, display.color565(cin, cin, 0));
+  yo = 7;
+  xo = 0; TFDrawText (&display, "LN   CAR   MIN", xo, yo, display.color565(cin, 0, 0));
+  yo = 13;
+  xo = 0; TFDrawChar (&display,  'G', xo, yo, display.color565(0, cin, 0));
+  xo += 4; TFDrawChar (&display, 'R', xo, yo, display.color565(0, cin, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0));
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  if (Car == "8")
+  {
+    xo += 4; TFDrawText (&display, String(Car), xo, yo, display.color565(0, cin, 0)); 
+  }
+  else
+  {
+    xo += 4; TFDrawText (&display, String(Car), xo, yo, display.color565(cin, cin, 0));
+  }
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawText (&display, String(CMin), xo, yo, display.color565(cin, cin, 0));
+  
+  yo = 19;
+  xo = 0; TFDrawText (&display, "DEST", xo, yo, display.color565(cin, 0, 0));
+  yo = 25;
+  xo = 0; TFDrawText (&display, String(Destination), xo, yo, display.color565(cin, cin, 0));
+    
+ }
+ else if (Line == "BL")
+ {
+  Serial.println("BLUE LINE");
+  use_ani = 0;
+  yo = 1;
+  xo = 0; TFDrawText (&display, String(LocationName), xo, yo, display.color565(cin, cin, 0));
+  yo = 7;
+  xo = 0; TFDrawText (&display, "LN   CAR   MIN", xo, yo, display.color565(cin, 0, 0));
+  yo = 13;
+  xo = 0; TFDrawChar (&display,  'B', xo, yo, display.color565(0, 0, cin));
+  xo += 4; TFDrawChar (&display, 'L', xo, yo, display.color565(0, 0, cin)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  if (Car == "8")
+  {
+    xo += 4; TFDrawText (&display, String(Car), xo, yo, display.color565(0, cin, 0)); 
+  }
+  else
+  {
+    xo += 4; TFDrawText (&display, String(Car), xo, yo, display.color565(cin, cin, 0));
+  }
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawText (&display, String(CMin), xo, yo, display.color565(cin, cin, 0));
+  
+  yo = 19;
+  xo = 0; TFDrawText (&display, "DEST", xo, yo, display.color565(cin, 0, 0));
+  yo = 25;
+  xo = 0; TFDrawText (&display, String(Destination), xo, yo, display.color565(cin, cin, 0));
+    
+ }
+ else if (Line == "SV")
+ {
+  Serial.println("SILVER LINE");
+  use_ani = 0;
+  yo = 1;
+  xo = 0; TFDrawText (&display, String(LocationName), xo, yo, display.color565(cin, cin, 0));
+  yo = 7;
+  xo = 0; TFDrawText (&display, "LN   CAR   MIN", xo, yo, display.color565(cin, 0, 0));
+  yo = 13;
+  xo = 0; TFDrawChar (&display,  'S', xo, yo, display.color565(cin, cin, cin));
+  xo += 4; TFDrawChar (&display, 'V', xo, yo, display.color565(cin, cin, cin)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  if (Car == "8")
+  {
+    xo += 4; TFDrawText (&display, String(Car), xo, yo, display.color565(0, cin, 0)); 
+  }
+  else
+  {
+    xo += 4; TFDrawText (&display, String(Car), xo, yo, display.color565(cin, cin, 0));
+  }
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawText (&display, String(CMin), xo, yo, display.color565(cin, cin, 0));
+  
+  yo = 19;
+  xo = 0; TFDrawText (&display, "DEST", xo, yo, display.color565(cin, 0, 0));
+  yo = 25;
+  xo = 0; TFDrawText (&display, String(Destination), xo, yo, display.color565(cin, cin, 0));
+    
+
+ }
+ else if (Line == "--")
+ {
+  Serial.println("LINE/TRAIN OUT OF SERVICE");
+  use_ani = 0;
+  yo = 1;
+  xo = 0; TFDrawText (&display, String(LocationName), xo, yo, display.color565(cin, cin, 0));
+  yo = 7;
+  xo = 0; TFDrawText (&display, "LN   CAR   MIN", xo, yo, display.color565(cin, 0, 0));
+  yo = 13;
+  xo = 0; TFDrawChar (&display,  '-', xo, yo, display.color565(cin, cin, cin));
+  xo += 4; TFDrawChar (&display, '-', xo, yo, display.color565(cin, cin, cin)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  if (Car == "8")
+  {
+    xo += 4; TFDrawText (&display, String(Car), xo, yo, display.color565(0, cin, 0)); 
+  }
+  else
+  {
+    xo += 4; TFDrawText (&display, String(Car), xo, yo, display.color565(cin, cin, 0));
+  }
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawText (&display, String(CMin), xo, yo, display.color565(cin, cin, 0));
+  
+  yo = 19;
+  xo = 0; TFDrawText (&display, "DEST", xo, yo, display.color565(cin, 0, 0));
+  yo = 25;
+  xo = 0; TFDrawText (&display, String(Destination), xo, yo, display.color565(cin, cin, 0));
+    
+ }
+ else if (Line == "No")
+ {
+  Serial.println("No Passenger");
+  use_ani = 0;
+  yo = 1;
+  xo = 0; TFDrawText (&display, String(LocationName), xo, yo, display.color565(cin, cin, 0));
+  yo = 7;
+  xo = 0; TFDrawText (&display, "LN   CAR   MIN", xo, yo, display.color565(cin, 0, 0));
+  yo = 13;
+  xo = 0; TFDrawChar (&display,  'N', xo, yo, display.color565(cin, cin, cin));
+  xo += 4; TFDrawChar (&display, 'O', xo, yo, display.color565(cin, cin, cin)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  if (Car == "8")
+  {
+    xo += 4; TFDrawText (&display, String(Car), xo, yo, display.color565(0, cin, 0)); 
+  }
+  else
+  {
+    xo += 4; TFDrawText (&display, String(Car), xo, yo, display.color565(cin, cin, 0));
+  }
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawText (&display, String(CMin), xo, yo, display.color565(cin, cin, 0));
+  
+  yo = 19;
+  xo = 0; TFDrawText (&display, "DEST", xo, yo, display.color565(cin, 0, 0));
+  yo = 25;
+  xo = 0; TFDrawText (&display, String(Destination), xo, yo, display.color565(cin, cin, 0));
+    
+ }
+ else
+ {
+  Serial.println("LINE UNKNOWN");
+  use_ani = 0;
+  yo = 1;
+  xo = 0; TFDrawText (&display, String(LocationName), xo, yo, display.color565(cin, cin, 0));
+  yo = 7;
+  xo = 0; TFDrawText (&display, "LN   CAR   MIN", xo, yo, display.color565(cin, 0, 0));
+  yo = 13;
+  xo = 0; TFDrawText (&display, String(Line), xo, yo, display.color565(cin, cin, cin));
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  if (Car == "8")
+  {
+    xo += 4; TFDrawText (&display, String(Car), xo, yo, display.color565(0, cin, 0)); 
+  }
+  else
+  {
+    xo += 4; TFDrawText (&display, String(Car), xo, yo, display.color565(cin, cin, 0));
+  }
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 4; TFDrawText (&display, String(CMin), xo, yo, display.color565(cin, cin, 0));
+  
+  yo = 19;
+  xo = 0; TFDrawText (&display, "DEST", xo, yo, display.color565(cin, 0, 0));
+  yo = 25;
+  xo = 0; TFDrawText (&display, String(Destination), xo, yo, display.color565(cin, cin, 0));
+    
+ }
+ delay (8000);
+ display.fillScreen (0);
+ ntpsync = 1;
+ draw_weather ();
+ draw_date ();
+
+}
+
 //
 void draw_date ()
 {
@@ -1230,9 +2404,33 @@ void loop()
   //animations?
   cm = millis ();
   //
+
+//#define SHOW_WMATA
+#ifdef SHOW_WMATA
+    if (ss == 50)
+       check_WMATA ();
+    else
+      //Serial.println ("WMATA: It is not currently on the 45 second mark.");
+#endif
+
+//#define SHOW_WX_ALERT
+#ifdef SHOW_WX_ALERT
+      if (ss == 15)
+        check_NWS ();
+      else
+        //Serial.println("Weather Alerts: It is not currently on the 15 second mark.");
+#endif
+
+#ifdef SHOW_NETWORK_STATUS
+    if (ss == 37)
+       check_Network ();
+    else
+      //Serial.println ("CHECK NETWORK: It is not currently on the 45 second mark.");
+#endif
+
 #ifdef USE_FIREWORKS
   //fireworks on 1st of Jan 00:00, for 55 seconds
-  if (1 && (month (tnow) == 1 && day (tnow) == 1 && hh == 0 && mm == 0))
+  if (1 && (month (tnow) == 1 && day (tnow) == 1 && hh == 0 && mm == 0) || (month (tnow) == 7 && day (tnow) == 4 && hh == 0 && mm == 0))
   {
     if (ss > 0 && ss < 30)
     {
@@ -1246,6 +2444,7 @@ void loop()
       ntpsync = 1;
       return;
     }
+    Serial.println("Not time for Fireworks");
   }
 #endif //define USE_FIREWORKS
 
@@ -1344,22 +2543,51 @@ void loop()
       int m1 = mm / 10;
       if (m0 != digit2.Value ()) digit2.Morph (m0);
       if (m1 != digit3.Value ()) digit3.Morph (m1);
-      prevmm = mm;
+      prevmm = mm; // draw weather every minute on the mark
       //
+      draw_weather ();
+      draw_date ();
+
 //#define SHOW_SOME_LOVE
 #ifdef SHOW_SOME_LOVE
-      if (mm == 0)
-        draw_love ();
-      else
+        if (mm == 0)
+          draw_love ();
+        else
+          Serial.println("No Love, It's not on the hour mark.");
 #endif
-        draw_weather ();
+
+//#define SHOW_SOME_PRIDE
+#ifdef SHOW_SOME_PRIDE
+      if ((month (tnow) == 6))
+        if (mm == 0)
+          draw_pride ();
+        else
+          Serial.println("Pride Month: Not on the hour mark.");
+      else if ((month (tnow) == 10 && day (tnow) == 11))
+        if (mm == 0)
+          draw_OutDay ();
+        else
+          Serial.println("National Coming Out Day: Not on the hour mark.");
+      else
+        Serial.println("No current Pride events");
+#endif
+
+//#define SHOW_FIREEMS_ALERT
+#ifdef SHOW_FIREEMS_ALERT
+      if (ss == 0)
+        draw_FireEMSAlert ();
+      else
+      Serial.println("");
+#endif
+ 
+        //draw_weather ();
     }
     //hours
     if (hh != prevhh) 
     {
       prevhh = hh;
       //
-      draw_date ();
+      //draw_date ();
       //brightness control: dimmed during the night(25), bright during the day(150)
       if (hh == 20 || hh == 8)
       {
@@ -1375,6 +2603,7 @@ void loop()
       if (h0 != digit4.Value ()) digit4.Morph (h0);
       if (h1 != digit5.Value ()) digit5.Morph (h1);
     }//hh changed
+    
   }
   //set NTP sync interval as needed
   if (NTP.getInterval() < 3600 && year(now()) > 1970)
@@ -1385,4 +2614,3 @@ void loop()
   //
 	//delay (0);
 }
-
