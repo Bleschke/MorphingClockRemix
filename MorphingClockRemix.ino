@@ -7,7 +7,7 @@ provided 'AS IS', use at your own risk
 
 Further Modified by:
  * Brian Leschke
- * 6 September 2019
+ * 9 September 2019
  * 
  * 
 Additions:
@@ -114,11 +114,11 @@ const int nws_buffer_size = 300;                  // Do not change. Length of js
 const int nws_Buffer=300;                         // Do not change.
 
 char* nwsConds[]={                                // Do not change.
-   "\"status\":",
-   "\"messageType\":",
-   "\"urgency\":",
-   "\"event\":",
-   "\"headline\":",
+   "\"status\": ",
+   "\"messageType\": ",
+   "\"urgency\": ",
+   "\"event\": ",
+   "\"headline\": ",
 };
 int num_wx_elements      = 5;  // number of conditions you are retrieving, count of elements in conds
 unsigned long WXMillis   = 0;  // temporary millis() register
@@ -1779,7 +1779,8 @@ void parseJSON_metro(char json[300])
   Serial.println("RED LINE");
   use_ani = 0;
   yo = 1;
-  xo = 0; TFDrawText (&display, String(LocationName), xo, yo, display.color565(cin, cin, 0));
+  xo = 0; TFDrawText (&display,"O", xo, yo, display.color565(cin, 0, 0));
+  xo += 6; TFDrawText (&display, String(LocationName), xo, yo, display.color565(cin, cin, 0));
   yo = 7;
   xo = 0; TFDrawText (&display, "LN   CAR   MIN", xo, yo, display.color565(cin, 0, 0));
   yo = 13;
@@ -1814,7 +1815,8 @@ void parseJSON_metro(char json[300])
   Serial.println("ORANGE LINE");
   use_ani = 0;
   yo = 1;
-  xo = 0; TFDrawText (&display, String(LocationName), xo, yo, display.color565(cin, cin, 0));
+  xo = 0; TFDrawText (&display,"O", xo, yo, display.color565(255, 165, 0));
+  xo += 6; TFDrawText (&display, String(LocationName), xo, yo, display.color565(cin, cin, 0));
   yo = 7;
   xo = 0; TFDrawText (&display, "LN   CAR   MIN", xo, yo, display.color565(cin, 0, 0));
   yo = 13;
@@ -1850,7 +1852,8 @@ void parseJSON_metro(char json[300])
   Serial.println("YELLOW LINE");
   use_ani = 0;
   yo = 1;
-  xo = 0; TFDrawText (&display, String(LocationName), xo, yo, display.color565(cin, cin, 0));
+  xo = 0; TFDrawText (&display,"O", xo, yo, display.color565(cin, cin, 0));
+  xo += 6; TFDrawText (&display, String(LocationName), xo, yo, display.color565(cin, cin, 0));
   yo = 7;
   xo = 0; TFDrawText (&display, "LN   CAR   MIN", xo, yo, display.color565(cin, 0, 0));
   yo = 13;
@@ -1885,7 +1888,8 @@ void parseJSON_metro(char json[300])
   Serial.println("GREEN LINE");
   use_ani = 0;
   yo = 1;
-  xo = 0; TFDrawText (&display, String(LocationName), xo, yo, display.color565(cin, cin, 0));
+  xo = 0; TFDrawText (&display,"O", xo, yo, display.color565(0, cin, 0));
+  xo += 6; TFDrawText (&display, String(LocationName), xo, yo, display.color565(cin, cin, 0));
   yo = 7;
   xo = 0; TFDrawText (&display, "LN   CAR   MIN", xo, yo, display.color565(cin, 0, 0));
   yo = 13;
@@ -1920,7 +1924,8 @@ void parseJSON_metro(char json[300])
   Serial.println("BLUE LINE");
   use_ani = 0;
   yo = 1;
-  xo = 0; TFDrawText (&display, String(LocationName), xo, yo, display.color565(cin, cin, 0));
+  xo = 0; TFDrawText (&display,"O", xo, yo, display.color565(0, 0, 255));
+  xo += 6; TFDrawText (&display, String(LocationName), xo, yo, display.color565(cin, cin, 0));
   yo = 7;
   xo = 0; TFDrawText (&display, "LN   CAR   MIN", xo, yo, display.color565(cin, 0, 0));
   yo = 13;
@@ -1955,7 +1960,8 @@ void parseJSON_metro(char json[300])
   Serial.println("SILVER LINE");
   use_ani = 0;
   yo = 1;
-  xo = 0; TFDrawText (&display, String(LocationName), xo, yo, display.color565(cin, cin, 0));
+  xo = 0; TFDrawText (&display,"O", xo, yo, display.color565(cin, cin, cin));
+  xo += 6; TFDrawText (&display, String(LocationName), xo, yo, display.color565(cin, cin, 0));
   yo = 7;
   xo = 0; TFDrawText (&display, "LN   CAR   MIN", xo, yo, display.color565(cin, 0, 0));
   yo = 13;
