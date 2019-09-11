@@ -1477,7 +1477,7 @@ void check_Network ()
 
   display.fillScreen (0);
   
-  if (pingResult1 >= 0) {
+  if (pingResult1 > 0) {
     Serial.print("1. ONLINE");
     use_ani = 0;
     yo = 1;
@@ -1501,7 +1501,7 @@ void check_Network ()
     xo += 4; TFDrawChar (&display, 'N', xo, yo, display.color565(cin, 0, 0)); 
   }
 
-  if (pingResult2 >= 0) {
+  if (pingResult2 > 0) {
     Serial.print("2. ONLINE");
     yo = 7;
     xo = 0; TFDrawChar  (&display, 'F', xo, yo, display.color565(cin, cin, cin)); 
@@ -1524,7 +1524,7 @@ void check_Network ()
     xo += 4; TFDrawChar (&display, 'N', xo, yo, display.color565(cin, 0, 0)); 
   }
   
-  if (pingResult3 >= 0) {
+  if (pingResult3 > 0) {
     Serial.print("3. ONLINE");
     yo = 13;
     xo = 0; TFDrawChar  (&display, '.', xo, yo, display.color565(cin, cin, cin)); 
@@ -1546,7 +1546,7 @@ void check_Network ()
     xo += 4; TFDrawChar (&display, 'N', xo, yo, display.color565(cin, 0, 0)); 
   }
 
-  if (pingResult4 >= 0) {
+  if (pingResult4 > 0) {
     Serial.print("4. ONLINE");
     yo = 19;
     xo = 0; TFDrawChar  (&display, 'W', xo, yo, display.color565(cin, cin, cin)); 
@@ -1568,7 +1568,7 @@ void check_Network ()
     xo += 4; TFDrawChar (&display, 'N', xo, yo, display.color565(cin, 0, 0)); 
   }
 
-  if (pingResult5 >= 0) {
+  if (pingResult5 > 0) {
     Serial.print("5. ONLINE");
     yo = 25;
     xo = 0; TFDrawChar  (&display, 'W', xo, yo, display.color565(cin, cin, cin)); 
@@ -1590,7 +1590,7 @@ void check_Network ()
     xo += 4; TFDrawChar (&display, 'N', xo, yo, display.color565(cin, 0, 0)); 
   }
 
-  if (pingResult6 >= 0) {
+  if (pingResult6 > 0) {
     Serial.print("6. ONLINE");
     yo = 1;
     xo = 32; TFDrawChar  (&display, 'A', xo, yo, display.color565(cin, cin, cin)); 
@@ -1612,7 +1612,7 @@ void check_Network ()
     xo += 4; TFDrawChar (&display, 'N', xo, yo, display.color565(cin, 0, 0)); 
   }
 
-  if (pingResult7 >= 0) {
+  if (pingResult7 > 0) {
     Serial.print("7. ONLINE");
     yo = 7;
     xo = 32; TFDrawChar  (&display, 'P', xo, yo, display.color565(cin, cin, cin)); 
