@@ -1472,7 +1472,7 @@ void check_Network ()
   Serial.println("");
   Serial.println("Pinging ");
   Serial.print(device7);
-  pingResult6 = Ping.ping(device7, 1);
+  pingResult7 = Ping.ping(device7, 1);
 
 
   display.fillScreen (0);
