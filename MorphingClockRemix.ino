@@ -1217,7 +1217,7 @@ void check_NWS ()
         }
         i++;                                                    // add 1 to timer/counter
       }                    // end while i<5000
-     if (j==num_elements-1)                                     // if last element
+     if (j==num_wx_elements-1)                                     // if last element
         {json[n]='}';}                                          // add end bracket of json string
      else                                                       // else
         {json[n]=',';}                                          // add comma as element delimiter
