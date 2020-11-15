@@ -7,25 +7,33 @@ provided 'AS IS', use at your own risk
 
 Further Modified by:
  * Brian Leschke
- * 9 September 2019
+ * 03 November 2020
  * 
  * 
 Additions:
- - Weather Alerts (not currently working)
+ - Weather Alerts
  - Fire/EMS Alerts
  - WMATA Metro Arrival Times
  - Network Device Status (UP/DN)
+ - COVID-19 Statistics per Country
  - Additional date-based events
- */
-
  
+ ** Flickering is Fixed! **
+ 
+ */ 
 
 #include <TimeLib.h>
 #include <NtpClientLib.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266Ping.h>
+#include <ESP8266HTTPClient.h>
+#include <ArduinoJson.h>
+#include <ESP8266mDNS.h>
+#include <WiFiUdp.h>
+#include <ArduinoOTA.h>
 
-#define double_buffer
+
+//#define double_buffer
 #include <PxMatrix.h>
 
 #define USE_ICONS
@@ -37,14 +45,12 @@ Additions:
 #define SHOW_FIREEMS_ALERT
 #define SHOW_WMATA
 #define SHOW_NETWORK_STATUS
+#define SHOW_COVID_STATS
 
-
-//#include <Adafruit_GFX.h>    // Core graphics library
-//#include <Fonts/FreeMono9pt7b.h>
 
 //=== FIRE-EMS INFORMATION ===
-char SERVER_NAME[]    = "x.x.x.x"; // Address of the webserver without "http". Can also be an IP address.
-int SERVER_PORT       = PORT-NUM-HERE;       // webserver port
+char SERVER_NAME[]    = "X.X.X.X"; // Address of the webserver without "http". Can also be an IP address.
+int SERVER_PORT       = SERVER-PORT-HERE;       // webserver port
 
 char Str[11];
 int prevNum           = 0; //Number of previous emails before check
@@ -66,12 +72,12 @@ String location = "LOCATION-HERE"; //e.g. "5391811" = San Diego, CA
 //=== NETWORK CHECK ===
 //change device names on line 1484
 const char* device1 = "www.google.com";   //IP address or web address without Http://
-const char* device2 = "x.x.x.x";
-const char* device3 = "x.x.x.x";
-const char* device4 = "x.x.x.x";
-const char* device5 = "x.x.x.x";
-const char* device6 = "x.x.x.x";
-const char* device7 = "x.x.x.x";
+const char* device2 = "X.X.X.X";
+const char* device3 = "X.X.X.X";
+const char* device4 = "X.X.X.X";
+const char* device5 = "X.X.X.X";
+const char* device6 = "X.X.X.X";
+const char* device7 = "X.X.X.X";
 
 int pingResult1;                      //Do not change.
 int pingResult2;                      //Do not change.
@@ -104,14 +110,22 @@ char* metroConds[]={                                // Do not change.
 int num_elements        = 9;  // number of conditions you are retrieving, count of elements in conds
 unsigned long WMillis   = 0;  // temporary millis() register
 
+//=== COVID-19 TRACKING INFORMATION ===
+
+#define      COVIDServer             "http://coronavirus-19-api.herokuapp.com/countries/USA"     // name address for COVID-19 tracker
+//const String covidLocationCode     = "COUNTRY-ABBREV-HERE";      // country code found here: https://coronavirus-19-api.herokuapp.com/tabs/tab2
+
+long int cases,todayCases,deaths,todaydeaths,recovered;
+
+
 //=== NWS WEATHER.GOV API INFOMRATION===
 
 #define NWSServer            "api.weather.gov"  //name address for weather.gov (using dns)
 const String nwsKey        = "KEY-HERE";
 const String countyCode    = "COUNTY-CODE-HERE"; //Your county Code (ex. NCC055) https://alerts.weather.gov/
 
-const int nws_buffer_size = 300;                  // Do not change. Length of json buffer
-const int nws_Buffer=300;                         // Do not change.
+const int nws_buffer_size = 800;                  // Do not change. Length of json buffer
+const int nws_Buffer=800;                         // Do not change.
 
 char* nwsConds[]={                                // Do not change.
    "\"status\": ",
@@ -158,7 +172,7 @@ Ticker display_ticker;
 PxMATRIX display(64, 32, P_LAT, P_OE, P_A, P_B, P_C, P_D, P_E);
 
 //=== SEGMENTS ===
-int cin = 25; //color intensity
+int cin = 20; //color intensity
 #include "Digit.h"
 Digit digit0(&display, 0, 63 - 1 - 9*1, 8, display.color565(0, 0, 255));
 Digit digit1(&display, 0, 63 - 1 - 9*2, 8, display.color565(0, 0, 255));
@@ -190,7 +204,7 @@ void configModeCallback (WiFiManager *myWiFiManager)
   drd.stop ();
 }
 
-char timezone[5] = "-4";
+char timezone[5] = "-5";
 char military[3] = "Y";     // 24 hour mode? Y/N
 char u_metric[3] = "N";     // use metric for units? Y/N
 char date_fmt[7] = "M.D.Y"; // date format: D.M.Y or M.D.Y or M.D or D.M or D/M/Y.. looking for trouble
@@ -372,7 +386,7 @@ void wifi_setup ()
   */
   //
   //start NTP
-  NTP.begin ("pool.ntp.org", String(timezone).toInt(), false);
+  NTP.begin ("pool.ntp.org", String(timezone).toInt(), true);
   NTP.setInterval (10);//force rapid sync in 10sec
 
   if (shouldSaveConfig) 
@@ -382,6 +396,56 @@ void wifi_setup ()
   drd.stop ();
   
   //delay (1500);
+
+  // Port defaults to 8266
+  // ArduinoOTA.setPort(8266);
+
+  // Hostname defaults to esp8266-[ChipID]
+  ArduinoOTA.setHostname("morphclock");
+
+  // No authentication by default
+  //ArduinoOTA.setPassword("admin");
+
+  // Password can be set with it's md5 value as well
+  // MD5(admin) = 21232f297a57a5a743894a0e4a801fc3
+  // ArduinoOTA.setPasswordHash("21232f297a57a5a743894a0e4a801fc3");
+
+    ArduinoOTA.onStart([]() {
+    String type;
+    if (ArduinoOTA.getCommand() == U_FLASH) {
+      type = "sketch";
+    } else { // U_SPIFFS
+      type = "filesystem";
+    }
+
+    // NOTE: if updating SPIFFS this would be the place to unmount SPIFFS using SPIFFS.end()
+    Serial.println("Start updating " + type);
+  });
+  ArduinoOTA.onEnd([]() {
+    Serial.println("\nEnd");
+  });
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+  });
+  ArduinoOTA.onError([](ota_error_t error) {
+    Serial.printf("Error[%u]: ", error);
+    if (error == OTA_AUTH_ERROR) {
+      Serial.println("Auth Failed");
+    } else if (error == OTA_BEGIN_ERROR) {
+      Serial.println("Begin Failed");
+    } else if (error == OTA_CONNECT_ERROR) {
+      Serial.println("Connect Failed");
+    } else if (error == OTA_RECEIVE_ERROR) {
+      Serial.println("Receive Failed");
+    } else if (error == OTA_END_ERROR) {
+      Serial.println("End Failed");
+    }
+  });
+  ArduinoOTA.begin();
+  Serial.println("Ready");
+  Serial.print("IP address: ");
+  Serial.println(WiFi.localIP());
+  
   getWeather ();
 }
 
@@ -395,6 +459,7 @@ void setup()
 	Serial.begin (115200);
   //display setup
   display.begin (16);
+  display.setMuxDelay(1,1,0,0,0);
 #ifdef ESP8266
   display_ticker.attach (0.002, display_updater);
 #endif
@@ -1149,7 +1214,7 @@ void check_NWS ()
   // Use WiFiClient class to create TCP connections
   WiFiClient client;
   
-  const int nws_httpPort = 443;
+  const int nws_httpPort = 80;
   
   if (!client.connect(NWSServer, nws_httpPort)) {
     Serial.println("NWS: connection failed");
@@ -1231,6 +1296,7 @@ void check_NWS ()
 void parseJSON_nws(char json[300])
 {
   display.fillScreen (0);
+  //StaticJsonDocument<buffer> jsonBuffer;
   StaticJsonBuffer<buffer> jsonBuffer;
   JsonObject& root = jsonBuffer.parseObject(json);
  
@@ -1260,9 +1326,9 @@ void parseJSON_nws(char json[300])
  Serial.println(Event);
  Serial.println(Headline);
  
- if (wxstatus == "ACTUAL")
+ if (wxstatus == "Actual")
  {
-  if (Event == "TORNADO WARNING")
+  if (Event == "Tornado Warning")
   {
     Serial.println ("Tornado Warning");
     use_ani = 0;
@@ -1271,70 +1337,70 @@ void parseJSON_nws(char json[300])
     yo=26;
     xo  = 0; TFDrawText (&display, String("SEEK SHELTER NOW"), xo, yo, display.color565(255, 0, 0)); 
   }
-  else if (Event == "TORNADO WATCH")
+  else if (Event == "Tornado Watch")
   {
     Serial.println ("Tornado Watch");
     use_ani = 0;
     yo = 1;
     xo  = 0; TFDrawText (&display, String(" TORNADO  WATCH "), xo, yo, display.color565(255, 165, 0));    
   }
-  else if (Event == "HURRICANE WARNING")
+  else if (Event == "Hurricane Warning")
   {
     Serial.println ("Hurricane Warning");
     use_ani = 0;
     yo = 1;
     xo  = 0; TFDrawText (&display, String(" HURRICANE  WRN "), xo, yo, display.color565(255, 165, 0));  
   }
-  else if (Event == "HURRICANE WATCH")
+  else if (Event == "Hurricane Watch")
   {
     Serial.println ("Hurricane Watch");
     use_ani = 0;
     yo = 1;
     xo  = 0; TFDrawText (&display, String(" HURRICANE  WAT "), xo, yo, display.color565(255, 165, 0)); 
   }
-  else if (Event == "SEVERE THUNDERSTORM WARNING")
+  else if (Event == "Severe Thunderstorm Warning")
   {
     Serial.println ("Severe Thunderstorm Warning");
     use_ani = 0;
     yo = 1;
     xo  = 0; TFDrawText (&display, String("SEV THUNDER WRN "), xo, yo, display.color565(255, 165, 0));
   }
-  else if (Event == "SEVERE THUNDERSTORM WATCH")
+  else if (Event == "Severe Thunderstorm Watch")
   {
     Serial.println ("Severe Thunderstorm Watch");
     use_ani = 0;
     yo = 1;
     xo  = 0; TFDrawText (&display, String("SEV THUNDER WAT "), xo, yo, display.color565(255, 165, 0));
   }
-  else if (Event == "BLIZZARD WARNING")
+  else if (Event == "Blizzard Warning")
   {
     Serial.println ("Blizzard Warning");
     use_ani = 0;
     yo = 1;
     xo  = 0; TFDrawText (&display, String("BLIZZARD WARNING"), xo, yo, display.color565(255, 165, 0)); 
   }
-  else if (Event == "WINTER STORM WARNING")
+  else if (Event == "Winter Storm Warning")
   {
     Serial.println ("Winter Storm Warning");
     use_ani = 0;
     yo = 1;
     xo  = 0; TFDrawText (&display, String("WINTER STORM WRN"), xo, yo, display.color565(255, 165, 0)); 
   }
-  else if (Event == "WINTER STORM WATCH")
+  else if (Event == "Winter Storm Watch")
   {
     Serial.println ("Winter Storm Watch");
     use_ani = 0;
     yo = 1;
     xo  = 0; TFDrawText (&display, String("WINTER STORM WAT"), xo, yo, display.color565(255, 165, 0)); 
   }
-  else if (Event == "FLOOD WARNING")
+  else if (Event == "Flood Warning")
   {
     Serial.println ("Flood Warning");
     use_ani = 0;
     yo = 1;
     xo  = 0; TFDrawText (&display, String(" FLOOD  WARNING "), xo, yo, display.color565(255, 165, 0)); 
   }
-  else if (Event == "FLASH FLOOD WARNING")
+  else if (Event == "Flash Flood Warning")
   {
     Serial.println ("Flash Flood Warning");
     use_ani = 0;
@@ -1615,7 +1681,7 @@ void check_Network ()
   if (pingResult7 > 0) {
     Serial.print("7. ONLINE");
     yo = 7;
-    xo = 32; TFDrawChar  (&display, 'P', xo, yo, display.color565(cin, cin, cin)); 
+    xo = 32; TFDrawChar (&display, 'P', xo, yo, display.color565(cin, cin, cin)); 
     xo += 4; TFDrawChar (&display, 'A', xo, yo, display.color565(cin, cin, cin)); 
     xo += 4; TFDrawChar (&display, 'G', xo, yo, display.color565(cin, cin, cin)); 
     xo += 4; TFDrawChar (&display, 'E', xo, yo, display.color565(cin, cin, cin)); 
@@ -1625,7 +1691,7 @@ void check_Network ()
   } else {
     Serial.print("7. OFFLINE");
     yo = 7;
-    xo = 32; TFDrawChar  (&display, 'P', xo, yo, display.color565(cin, cin, cin)); 
+    xo = 32; TFDrawChar (&display, 'P', xo, yo, display.color565(cin, cin, cin)); 
     xo += 4; TFDrawChar (&display, 'A', xo, yo, display.color565(cin, cin, cin)); 
     xo += 4; TFDrawChar (&display, 'G', xo, yo, display.color565(cin, cin, cin)); 
     xo += 4; TFDrawChar (&display, 'E', xo, yo, display.color565(cin, cin, cin)); 
@@ -2105,6 +2171,103 @@ void parseJSON_metro(char json[300])
 
 }
 
+
+int long check_COVID ()
+{ 
+  HTTPClient http;
+ // Serial.print("[HTTP] begin...\n");
+  http.begin(COVIDServer); //HTTP
+ // Serial.print("[HTTP] GET...\n");
+  int httpCode = http.GET();
+  if (httpCode > 0) 
+  {
+ //  Serial.printf("[HTTP] GET... code: %d\n", httpCode);
+    if (httpCode == HTTP_CODE_OK) 
+     {
+       String payload = http.getString();
+ //      Serial.println(payload);
+       const size_t buffersize = JSON_OBJECT_SIZE(12)+317;  // total size of JSON string
+       DynamicJsonBuffer jsonBuffer(buffersize);
+       JsonObject& root = jsonBuffer.parseObject(payload); // Parsing 
+       
+      // String country = root["country"];
+        String cases = root["cases"];
+        String todayCases =root["todayCases"];
+        String deaths = root["deaths"];
+        String todaydeaths = root["todayDeaths"];
+        String recovered = root["recovered"];
+        String country = root["country"];
+
+  Serial.println("COVID-19 Stats");
+  display.fillScreen (0);
+  use_ani = 0;
+  yo = 1;
+  //xo = 0; TFDrawText (&display,"O", xo, yo, display.color565(cin, 0, 0));
+  xo = 0; TFDrawText (&display, String(country) + " COVID-19", xo, yo, display.color565(cin, cin, 0));
+  yo = 7;
+  xo = 0; TFDrawText (&display, "CASES     TODAY ", xo, yo, display.color565(cin, 0, 0));
+  yo = 13;
+  xo = 0; TFDrawText (&display, String(cases), xo, yo, display.color565(0, cin, 0)); 
+  //xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  //xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  //xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  //xo += 7; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  //xo += 2; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 40; TFDrawText (&display, String(todayCases), xo, yo, display.color565(0, cin, 0)); 
+
+  yo = 19;
+  xo = 0; TFDrawText (&display, "DEATH     TODAY ", xo, yo, display.color565(cin, 0, 0));
+  yo = 25;
+  xo = 0; TFDrawText (&display, String(deaths), xo, yo, display.color565(0, cin, 0)); 
+  //xo += 4; TFDrawText (&display, String(deaths), xo, yo, display.color565(0, cin, 0)); 
+  //xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  //xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  //xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  //xo += 7; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  //xo += 2; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, 0, 0)); 
+  xo += 40; TFDrawText (&display, String(todaydeaths), xo, yo, display.color565(0, cin, 0)); 
+
+  Serial.println ("cases: " + cases);
+  Serial.println ("today cases: " + todayCases);
+  Serial.println ("deaths: " + deaths);
+  Serial.println ("today deaths: " + todaydeaths);
+
+  delay (8000);
+  display.fillScreen (0);
+  ntpsync = 1;
+  draw_weather ();
+  draw_date ();
+        
+      }      
+    else
+      {
+       Serial.printf("[HTTP] GET... failed, error: %s\n", http.errorToString(httpCode).c_str());
+       Serial.println("Error. No Data Parsed");
+    use_ani = 0;
+    yo = 1;
+    xo = 0;  TFDrawChar (&display, ' ', xo, yo, display.color565(cin, cin, 0)); 
+    xo += 4; TFDrawChar (&display, 'C', xo, yo, display.color565(cin, cin, 0)); 
+    xo += 4; TFDrawChar (&display, 'O', xo, yo, display.color565(cin, cin, 0)); 
+    xo += 4; TFDrawChar (&display, 'V', xo, yo, display.color565(cin, cin, 0)); 
+    xo += 4; TFDrawChar (&display, 'I', xo, yo, display.color565(cin, cin, 0)); 
+    xo += 4; TFDrawChar (&display, 'D', xo, yo, display.color565(cin, cin, 0)); 
+    xo += 4; TFDrawChar (&display, '-', xo, yo, display.color565(cin, cin, 0)); 
+    xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, cin, 0)); 
+    xo += 4; TFDrawChar (&display, 'N', xo, yo, display.color565(cin, cin, 0)); 
+    xo += 4; TFDrawChar (&display, 'O', xo, yo, display.color565(cin, cin, 0)); 
+    xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, cin, 0)); 
+    xo += 4; TFDrawChar (&display, 'D', xo, yo, display.color565(cin, cin, 0)); 
+    xo += 4; TFDrawChar (&display, 'A', xo, yo, display.color565(cin, cin, 0)); 
+    xo += 4; TFDrawChar (&display, 'T', xo, yo, display.color565(cin, cin, 0)); 
+    xo += 4; TFDrawChar (&display, 'A', xo, yo, display.color565(cin, cin, 0)); 
+    xo += 4; TFDrawChar (&display, ' ', xo, yo, display.color565(cin, cin, 0)); 
+      }
+      return cases,todayCases,deaths,todaydeaths,recovered;
+    http.end();   //Close connection
+  }
+  delay(100);
+}
+
 //
 void draw_date ()
 {
@@ -2411,6 +2574,8 @@ void loop()
   cm = millis ();
   //
 
+  ArduinoOTA.handle();
+
 //#define SHOW_WMATA
 #ifdef SHOW_WMATA
     if (ss == 50)
@@ -2426,6 +2591,15 @@ void loop()
       else
         //Serial.println("Weather Alerts: It is not currently on the 15 second mark.");
 #endif
+
+//#define SHOW_COVID_STATS
+#ifdef SHOW_COVID_STATS
+      if (ss == 15)
+        check_COVID ();
+      else
+        //Serial.println("COVID STATS: It is not currently on the 15 second mark.");
+#endif
+
 
 #ifdef SHOW_NETWORK_STATUS
     if (ss == 37)
@@ -2475,18 +2649,18 @@ void loop()
     //brightness control: dimmed during the night(25), bright during the day(150)
     if (hh >= 20 && cin == 150)
     {
-      cin = 25;
+      cin = 20;
       Serial.println ("night mode brightness");
       daytime = 0;
     }
     if (hh < 8 && cin == 150)
     {
-      cin = 25;
+      cin = 20;
       Serial.println ("night mode brightness");
       daytime = 0;
     }
     //during the day, bright
-    if (hh >= 8 && hh < 20 && cin == 25)
+    if (hh >= 8 && hh < 20 && cin == 20)
     {
       cin = 150;
       Serial.println ("day mode brightness");
@@ -2499,7 +2673,7 @@ void loop()
     //int cc_blu = display.color565 (0, 0, cin);
     int cc_col = cc_gry;
     //
-    if (cin == 25)
+    if (cin == 20)
       cc_col = cc_dgr;
     //reset digits color
     digit0.SetColor (cc_col);
