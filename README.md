@@ -1,13 +1,15 @@
 # MorphingClockRemix
-Further modified by: Brian Leschke 2019
+Further modified by: Brian Leschke 2020
 - Currently a work in progress.
-- It is known that there is a flickering issue. It may be resolved eventually.
+- Flickering issue is resolved
 
 ## Additions
 - Fire/EMS Alert (on top bar)
 - Weather Alert (on top bar) - currently not working
 - WMATA Metro Arrival Times (separate page) http://developer.wmata.com
 - Network Device Status - UP/DN (separate page)
+- COVID-19 Statistics (assigned by country)
+- OTA updates
 
 
 Remix from HarryFun's great Morphing Digital Clock idea https://www.instructables.com/id/Morphing-Digital-Clock/
@@ -36,6 +38,7 @@ Follow the great tutorial there and eventually use this code as alternative.
 - #define SHOW_WX_ALERT
 - #define SHOW_WMATA
 - #define SHOW_NETWORK_STATUS
+- #define SHOW_COVID_STATS
 
 You can re-enable it after configuration is done.
 <br>
